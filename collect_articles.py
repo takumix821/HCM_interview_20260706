@@ -113,16 +113,13 @@ def update(n: int = TOP_N) -> list[dict]:
         if entry["pid"] in existing_pids:
             break
         print(f"處理中：[{entry['pid']}] {entry['title']}", flush=True)
-        new_articles.append(
-            {
-                "pid": entry["pid"],
-                "title": entry["title"],
-                "content": fetch_article_content(entry["link"]),
-            }
-        )
-
-    for article in new_articles:
+        article = {
+            "pid": entry["pid"],
+            "title": entry["title"],
+            "content": fetch_article_content(entry["link"]),
+        }
         save_article(article)
+        new_articles.append(article)
 
     return new_articles
 
