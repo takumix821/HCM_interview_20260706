@@ -1,0 +1,6 @@
+services:
+  collect-articles:
+    build: .
+    volumes:
+      - ./articles:/app/articles
+    restart: unless-stopped
