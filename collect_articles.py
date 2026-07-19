@@ -8,14 +8,15 @@ https://www.hpa.gov.tw/Pages/TopicList.aspx?idx=0&nodeid=127
 行為：蒐集衛生福利部國民健康署「保健闢謠」文章
 路徑：首頁 > 服務園地 > 真相與闢謠 > 保健闢謠
 
-    - 第一次執行：資料夾 articles/ 是空的，會把文章列表最新的前 TOP_N 篇
-      全部視為「新文章」，逐篇存成一個 csv（初始化蒐集）。
-    - 之後再執行：只會把 articles/ 裡還沒出現過的 pid 抓下來、存檔
+    - 第一次執行：articles/articles.csv 還不存在，會把文章列表最新的前 TOP_N 篇
+      全部視為「新文章」，寫入 articles/articles.csv（初始化蒐集）。
+    - 之後再執行：只會把 articles.csv 裡還沒出現過的 pid 抓下來，各自新增一列
       （增量蒐集），已經蒐集過的文章不會重複下載內文。
 """
 
 import csv
 import tempfile
+from datetime import datetime
 from itertools import islice
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -27,7 +28,13 @@ from bs4 import BeautifulSoup
 LIST_URL = "https://www.hpa.gov.tw/Pages/TopicList.aspx?idx={idx}&nodeid=127"
 BASE_URL = "https://www.hpa.gov.tw"
 DATA_DIR = Path(__file__).parent / "articles"
+CSV_PATH = DATA_DIR / "articles.csv"
 TOP_N = 10  # 預設抓前 N 篇，呼叫 update(n=...) 可覆寫
+
+
+def log(msg: str) -> None:
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}", flush=True)
+
 
 # TWCA 中繼憑證
 INTERMEDIATE_CERT = Path(__file__).parent / "certs" / "twca_secure_ssl_intermediate.pem"
@@ -56,7 +63,7 @@ def extract_pid(link: str) -> str:
 
 
 def fetch_article_content(link: str) -> str:
-    """文章列表沒有內文，內文要另外到文章詳細頁抓（同 script.py）。"""
+    """文章列表沒有內文，內文要另外到文章詳細頁抓。"""
     soup = fetch_soup(link)
     content = soup.select_one("div.contentBlock")
     return content.get_text("\n", strip=True) if content else ""
@@ -80,21 +87,22 @@ def iter_list_entries():
 
 
 def get_existing_pids() -> set[str]:
-    """已收錄文章的 pid，用 articles/ 資料夾裡既有 csv 檔名的前綴推回。"""
-    if not DATA_DIR.exists():
+    """已收錄文章的 pid，從 articles.csv 裡讀出來。"""
+    if not CSV_PATH.exists():
         return set()
-    return {path.name.split("_", 1)[0] for path in DATA_DIR.glob("*.csv")}
+    with CSV_PATH.open(newline="", encoding="utf-8-sig") as f:
+        return {row["pid"] for row in csv.DictReader(f)}
 
 
-def save_article(article: dict) -> Path:
+def save_article(article: dict) -> None:
+    """把一篇文章新增成 articles.csv 裡的一列；檔案不存在時先建立並寫入標頭列。"""
     DATA_DIR.mkdir(exist_ok=True)
-    filename = f"{article['pid']}_{article['title']}.csv"
-    path = DATA_DIR / filename
-    with path.open("w", newline="", encoding="utf-8-sig") as f:
+    is_new_file = not CSV_PATH.exists()
+    with CSV_PATH.open("a", newline="", encoding="utf-8-sig" if is_new_file else "utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["pid", "title", "content"])
+        if is_new_file:
+            writer.writerow(["pid", "title", "content"])
         writer.writerow([article["pid"], article["title"], article["content"]])
-    return path
 
 
 def update(n: int = TOP_N) -> list[dict]:
@@ -102,7 +110,7 @@ def update(n: int = TOP_N) -> list[dict]:
     由新到舊檢查文章列表，遇到 pid 已經收錄過就停止（後面的一定更舊）。
     尚未收錄的文章才會去抓內文並存檔，避免重複下載已存在的內容。
 
-    第一次執行（articles/ 是空的）只抓最新 n 篇；之後執行不受 n 限制，
+    第一次執行（articles.csv 還不存在）只抓最新 n 篇；之後執行不受 n 限制，
     一路往舊翻到遇到已收錄過的 pid 為止，避免一次新增超過 n 篇時漏抓。
     """
     existing_pids = get_existing_pids()
@@ -112,7 +120,7 @@ def update(n: int = TOP_N) -> list[dict]:
     for entry in entries:
         if entry["pid"] in existing_pids:
             break
-        print(f"處理中：[{entry['pid']}] {entry['title']}", flush=True)
+        log(f"處理中：[{entry['pid']}] {entry['title']}")
         article = {
             "pid": entry["pid"],
             "title": entry["title"],
@@ -128,10 +136,8 @@ if __name__ == "__main__":
     new_articles = update(TOP_N)
 
     if not new_articles:
-        print("沒有新文章，資料已是最新。")
+        log("沒有新文章，資料已是最新。")
     else:
-        print(f"新增 {len(new_articles)} 篇文章：\n")
+        log(f"新增 {len(new_articles)} 篇文章：")
         for article in new_articles:
-            print(f"[{article['pid']}] {article['title']}")
-            print(article["content"])
-            print("---")
+            log(f"[{article['pid']}] {article['title']}")
